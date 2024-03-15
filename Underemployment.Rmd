@@ -1,0 +1,104 @@
+---
+title: "IPUMS"
+output: html_document
+date: "2023-03-09"
+---
+
+## Data Preparation 
+
+```{r setup}
+library(dplyr)
+```
+
+Setting up various paths
+
+```{r paths}
+path_data <- ("~/Documents/student_f/data/")
+path_csc <- ("~/Documents/student_f/CollegeScorecard_Raw_Data_09012022/")
+path_codebook <- ("~/Documents/student_f/codebook/")
+path_ipums <- ("~/Documents/student_f/IPUMS/")
+```
+
+## Data setup
+
+Extracting ACS Dataset
+```{r}
+ACS <- read.csv(file = paste0(path_ipums,"usa_00007.csv"))
+```
+
+## Assessment
+Using unemployment rate and underemployment to determine risk
+
+```{r}
+working_df <- ACS %>% filter(AGE >= 25 & AGE <= 65 & LABFORCE == 2)
+```
+
+```{r}
+clean_working_df <- working_df %>% group_by(AGE,YEAR) %>% filter(INCTOT <= quantile(INCTOT, p = .9) & INCTOT >= quantile(INCTOT, p = .1))
+```
+
+```{r}
+working_df %>% group_by(EMPSTAT) %>% summarise(population = n())
+working_df %>% filter(CLASSWKR != 0) %>% group_by(CLASSWKR, EDUCD) %>% summarise(population = n())
+```
+
+```{r}
+years_earning <- clean_working_df %>% group_by(YEAR) %>% summarise(total = sum(INCTOT), mean = mean(INCTOT), median = median(INCTOT), fmedian = median(FTOTINC))
+remove(working_df)
+```
+
+```{r}
+earning_conversion <- years_earning %>% summarise(year = YEAR, median_c = 50000/median, mean_c = 55750.16/mean, total_c = 56806565266/total, fmedian = 90000/fmedian, conv = (median_c + mean_c + fmedian)/3)
+earning_conversion
+```
+Convert to 2020
+
+```{r}
+clean_working_df$INCTOT[clean_working_df$YEAR == 2009] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2009]*earning_conversion$conv[earning_conversion$year == 2009]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2010] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2010]*earning_conversion$conv[earning_conversion$year == 2010]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2011] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2011]*earning_conversion$conv[earning_conversion$year == 2011]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2012] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2012]*earning_conversion$conv[earning_conversion$year == 2012]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2013] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2013]*earning_conversion$conv[earning_conversion$year == 2013]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2014] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2014]*earning_conversion$conv[earning_conversion$year == 2014]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2015] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2015]*earning_conversion$conv[earning_conversion$year == 2015]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2016] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2016]*earning_conversion$conv[earning_conversion$year == 2016]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2017] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2017]*earning_conversion$conv[earning_conversion$year == 2017]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2018] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2018]*earning_conversion$conv[earning_conversion$year == 2018]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2019] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2019]*earning_conversion$conv[earning_conversion$year == 2019]
+clean_working_df$INCTOT[clean_working_df$YEAR == 2020] <-clean_working_df$INCTOT[clean_working_df$YEAR == 2020]*earning_conversion$conv[earning_conversion$year == 2020]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2009] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2009]*earning_conversion$conv[earning_conversion$year == 2009]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2010] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2010]*earning_conversion$conv[earning_conversion$year == 2010]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2011] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2011]*earning_conversion$conv[earning_conversion$year == 2011]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2012] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2012]*earning_conversion$conv[earning_conversion$year == 2012]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2013] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2013]*earning_conversion$conv[earning_conversion$year == 2013]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2014] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2014]*earning_conversion$conv[earning_conversion$year == 2014]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2015] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2015]*earning_conversion$conv[earning_conversion$year == 2015]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2016] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2016]*earning_conversion$conv[earning_conversion$year == 2016]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2017] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2017]*earning_conversion$conv[earning_conversion$year == 2017]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2018] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2018]*earning_conversion$conv[earning_conversion$year == 2018]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2019] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2019]*earning_conversion$conv[earning_conversion$year == 2019]
+clean_working_df$FTOTINC[clean_working_df$YEAR == 2020] <-clean_working_df$FTOTINC[clean_working_df$YEAR == 2020]*earning_conversion$conv[earning_conversion$year == 2020]
+```
+
+```{r}
+md_df <- clean_working_df %>% filter(EMPSTAT == 1, CLASSWKR == 2) %>% group_by(EDUCD, DEGFIELD) %>%  summarise(MD_INC = median(INCTOT), MD_FT = median(FTOTINC))
+md_df
+```
+
+```{r}
+grouped_df <- clean_working_df %>% filter(EMPSTAT == 1, CLASSWKR == 2) %>% group_by(EDUCD, DEGFIELD) %>% select(OCC, IND,INCTOT,FTOTINC)
+remove(clean_working_df)
+grouped_df
+```
+
+By Occupation and Industry
+```{r}
+grouped_occ_ind <- grouped_df %>% group_by(OCC, IND) %>% summarise(low_ed = length(EDUCD[EDUCD < 101]), high_ed = length(EDUCD[EDUCD >= 101]), ratio = low_ed/(high_ed+low_ed), underemployment = if (ratio > .5){1}else{0})
+grouped_occ_ind
+```
+
+Save file
+```{r}
+write.csv(grouped_occ_ind, file = "underemployment.csv", row.names = FALSE)
+write.csv(md_df, file = "degfield.csv", row.names = FALSE)
+```

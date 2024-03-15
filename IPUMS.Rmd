@@ -1,0 +1,410 @@
+---
+title: "IPUMS"
+output: html_document
+date: "2023-03-09"
+---
+
+## Data Preparation 
+
+```{r setup}
+library(dplyr) 
+library(Amelia) 
+library(ggplot2)
+library(mice)
+library(lattice)
+library(gridExtra)
+library(caret)
+```
+
+Setting up various paths
+
+```{r paths}
+path_data <- ("~/Documents/student_f/data/")
+path_csc <- ("~/Documents/student_f/CollegeScorecard_Raw_Data_09012022/")
+path_codebook <- ("~/Documents/student_f/codebook/")
+path_ipums <- ("~/Documents/student_f/IPUMS/")
+```
+
+
+
+## Data setup
+
+Extracting ACS Dataset
+```{r}
+ACS <- read.csv(file = paste0(path_ipums,"usa_00006.csv"))
+```
+
+```{r}
+underemployment <- read.csv(file = "~/Documents/student_f/initial_work/underemployment.csv")
+degfield <- read.csv(file = "~/Documents/student_f/initial_work/degfield.csv")
+```
+
+## Assessment
+Using unemployment rate and underemployment to determine risk
+
+```{r}
+early_df <- ACS %>% filter(AGE >= 22 & AGE <= 27 & LABFORCE == 2)
+remove(ACS)
+```
+
+```{r}
+merged_early <- left_join(early_df, underemployment, by = c("OCC","IND"))
+merged_early <- left_join(merged_early , degfield, by = c("EDUCD","DEGFIELD"))
+good_df <- merged_early %>% filter(EDUCD >= 101)
+remove(early_df)
+```
+
+```{r}
+good_df <- good_df %>% mutate(FAMINC= FTOTINC - INCTOT)
+```
+
+```{r}
+good_df %>% group_by(MARST) %>% summarise(dd = mean(FAMINC), population = n())
+good_df <- good_df %>% filter(MARST == 6)
+good_df <- good_df %>% filter(INCWAGE <= quantile(INCWAGE, p = .95) & INCWAGE >= quantile(INCWAGE, p = .05))
+```
+
+```{r}
+hist(good_df$FAMINC[good_df$FAMINC != 0], xlim = c(-100000, 600000), breaks = 500)
+```
+```{r}
+hist(good_df$FAMINC)
+```
+
+```{r}
+hist(good_df$INCWAGE)
+```
+
+```{r}
+good_df <- good_df %>% filter(FAMINC <= quantile(FAMINC, p = .95) & FAMINC >= quantile(FAMINC, p = .05))
+```
+
+
+```{r}
+good_df %>% group_by(DEGFIELDD) %>% summarise(pop = n(), underpop = sum(as.numeric(underemployment),na.rm = TRUE), ratio = underpop/pop)
+```
+
+```{r}
+good_df$SCHOOL <- as.character(good_df$SCHOOL)
+good_df$EDUCD <- as.factor(good_df$EDUCD)
+good_df$GRADEATTD <- as.character(good_df$GRADEATTD)
+good_df$EMPSTATD <- as.character(good_df$EMPSTATD)
+good_df$DEGFIELDD <- as.character(good_df$DEGFIELDD)
+good_df$DEGFIELD2 <- as.character(good_df$DEGFIELD2)
+good_df$DEGFIELD <- as.character(good_df$DEGFIELD)
+good_df$DEGFIELD2D <- as.character(good_df$DEGFIELD2D)
+```
+
+##Arrange Dataset and Split dataset
+
+Select Y
+```{r}
+NANN <- good_df %>% filter(is.na(underemployment))
+full_ds <- good_df %>% filter(!is.na(underemployment))
+Y <- full_ds[,53]
+```
+
+```{r}
+data <- full_ds
+
+sample_size <- floor(0.7 * nrow(data))
+## set the seed to make your partition reproducible
+set.seed(12)
+train_index <- sample(seq_len(nrow(data)), size = sample_size)
+train_dataset <- data[train_index, ]
+test_dataset <- data[-train_index, ]
+train_labels <- Y[train_index]
+test_labels <- Y[-train_index]
+```
+
+
+Converting to factor
+```{r}
+train_labels <- as.factor(train_labels)
+test_labels <- as.factor(test_labels)
+```
+
+```{r}
+train_merged <- train_dataset
+train_merged$RESULTS <- train_labels
+test_merged <- test_dataset
+test_merged$RESULTS <- test_labels
+```
+
+```{r}
+train_merged %>% group_by(EDUCD) %>% summarise(p = n())
+train_merged %>% group_by(GRADEATTD) %>% summarise(p=n())
+train_merged %>% group_by(EMPSTATD) %>% summarise(p=n())
+```
+
+Evaluate Model
+```{r}
+test_merged1 <- subset(test_merged,test_merged$EMPSTATD != 15 & DEGFIELD2D != 2419)
+predicted_probabilities <- predict(logistic_model, newdata = test_merged1)
+
+threshold <- .5
+predicted_labels <- ifelse(predicted_probabilities > threshold, 1, 0)
+#Combine
+merged_prediction <- test_merged1
+merged_prediction$PREDICT <- predicted_labels
+
+confusion_matrix <- table(Predicted = predicted_labels, Actual = test_merged1$RESULTS)
+print(confusion_matrix)
+```
+```{r}
+# Calculate evaluation metrics
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1 Score:", f1_score, "\n")
+```
+
+## Decision Tree
+```{r}
+library(rpart)
+library(rpart.plot)
+```
+
+```{r}
+decision_tree_model <- rpart(RESULTS ~ SCHOOL + EDUCD + GRADEATTD , 
+                             data = train_merged
+                             , method = "class")
+```
+
+```{r}
+predicted_probabilities_dt <- predict(decision_tree_model, newdata = test_merged1)
+
+threshold <- .5
+predicted_labels_dt <- ifelse(predicted_probabilities_dt[,2] > threshold, 1, 0)
+
+#Combine
+merged_prediction_dt <- test_merged1
+merged_prediction_dt$PREDICT <- predicted_labels_dt
+
+confusion_matrix_dt <- table(Predicted = predicted_labels_dt, Actual = test_merged1$RESULTS)
+print(confusion_matrix_dt)
+```
+
+```{r}
+# Calculate evaluation metrics
+accuracy_dt <- sum(diag(confusion_matrix_dt)) / sum(confusion_matrix_dt)
+precision_dt <- confusion_matrix_dt[2, 2] / sum(confusion_matrix_dt[2, ])
+recall_dt <- confusion_matrix_dt[2, 2] / sum(confusion_matrix_dt[, 2])
+f1_score_dt <- 2 * (precision_dt * recall_dt) / (precision_dt + recall_dt)
+
+cat("Accuracy:", accuracy_dt, "\n")
+cat("Precision:", precision_dt, "\n")
+cat("Recall:", recall_dt, "\n")
+cat("F1 Score:", f1_score_dt, "\n")
+```
+
+```{r}
+rpart.plot(decision_tree_model, type = 4, extra = 106, 
+           under = TRUE, fallen.leaves = TRUE, digits = 2)
+```
+
+## Control Model
+
+```{r}
+control_model <- glm(underemployment ~ DEGFIELDD, data = train_merged, family = "binomial")
+```
+
+```{r}
+control_model <- rpart(underemployment ~ FAMINC, 
+                             data = train_merged
+                             , method = "class")
+
+```
+
+
+```{r}
+predicted_probabilities_control <- predict(control_model, newdata = test_merged1)
+
+threshold <- .5
+predicted_labels_control <- ifelse(predicted_probabilities_control[,2] > threshold, 1, 0)
+
+#Combine
+merged_prediction_control <- test_merged1
+merged_prediction_control$PREDICT <- predicted_labels_control
+
+confusion_matrix_control <- table(Predicted = predicted_labels_control, Actual = test_merged1$RESULTS)
+print(confusion_matrix_control)
+```
+
+```{r}
+# Calculate evaluation metrics
+accuracy_control <- sum(diag(confusion_matrix_control)) / sum(confusion_matrix_control)
+precision_control <- confusion_matrix_control[2, 2] / sum(confusion_matrix_control[2, ])
+recall_control <- confusion_matrix_control[2, 2] / sum(confusion_matrix_control[, 2])
+f1_score_control <- 2 * (precision * recall) / (precision_control + recall_control)
+
+cat("Accuracy:", accuracy_control, "\n")
+cat("Precision:", precision_control, "\n")
+cat("Recall:", recall_control, "\n")
+cat("F1 Score:", f1_score_control, "\n")
+```
+
+## Random Forest
+
+```{r}
+library(randomForest)
+
+```
+
+```{r}
+random_forest_model <- randomForest(RESULTS ~ SCHOOL + EDUCD + GRADEATTD + EMPSTATD + DEGFIELD + DEGFIELD2 +  FAMINC + MD_INC.y + MD_FT.y, 
+                                    ntree = 1000, data = train_merged)
+```
+
+```{r}
+print(random_forest_model)
+```
+
+```{r}
+predicted_labels_rf <- predict(random_forest_model, newdata = test_merged1)
+
+#Combine
+merged_prediction_rf <- test_merged1
+merged_prediction_rf$PREDICT <- predicted_labels_rf
+
+confusion_matrix_rf <- table(Predicted = predicted_labels_rf, Actual = test_merged1$RESULTS)
+print(confusion_matrix_rf)
+```
+
+```{r}
+# Calculate evaluation metrics
+accuracy_rf <- sum(diag(confusion_matrix_rf)) / sum(confusion_matrix_rf)
+precision_rf <- confusion_matrix_rf[2, 2] / sum(confusion_matrix_rf[2, ])
+recall_rf <- confusion_matrix_rf[2, 2] / sum(confusion_matrix_rf[, 2])
+f1_score_rf <- 2 * (precision_rf * recall_rf) / (precision_rf + recall_rf)
+
+cat("Accuracy:", accuracy_rf, "\n")
+cat("Precision:", precision_rf, "\n")
+cat("Recall:", recall_rf, "\n")
+cat("F1 Score:", f1_score_rf, "\n")
+```
+
+Plotting the tree
+```{r}
+single_tree <- getTree(random_forest_model, k = 1, labelVar = TRUE)
+# Convert the extracted tree to an rpart object
+rpart_tree <- rpart(single_tree)
+
+# Plot the rpart object
+rpart.plot(rpart_tree, type = 3, extra = 1, under = TRUE, fallen.leaves = TRUE, digits = 3)
+```
+
+
+```{r}
+df <- data.frame(Variable = c("DEGFIELDD", "DEGFIELD", "EDUCD", "FAMINC", "DEGFIELD2D", "DEGFIELD2", "EMPSTATD", "GRADEATTD"),
+                 Length = c(3491.57733, 1971.88501, 1582.73937, 678.42585, 105.99914, 60.46038, 17.74965, 16.99933))
+
+# Reorder the levels of the Variable column in descending order of Length
+df$Variable <- factor(df$Variable, levels = df$Variable[order(df$Length, decreasing = FALSE)])
+
+# Create the barplot
+ggplot(df, aes(x = Length, y = Variable)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Importance", y = "", title = "Importance of Variables") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+
+
+
+Differentiate categorical with numerical variables
+```{r}
+X_cat <- train_dataset %>% select(EDUCD, DEGFIELDD)#, EMPSTATD,  CLASSWKRD)#, OCC, IND)
+X_num <- train_dataset %>% select(INCTOT, FTOTINC)
+```
+
+```{r}
+Y <- train_dataset[,51]
+```
+
+```{r}
+X_df <- as.matrix(X_cat)
+X_df <- to_categorical(X_df)
+```
+
+
+
+Format categorical variables to one hot
+```{r}
+dmy <- caret::dummyVars(~ . , data = X_df,fullRank=TRUE)
+X_df <- data.frame(predict(dmy, newdata = X_df))
+reticulate::r_to_py(X_df)
+```
+
+```{r}
+
+```
+##NNetwork
+```{r}
+library(keras)
+```
+
+#Categorical input
+```{r}
+cat_layer <- layer_input(shape = 13,  name = 'cat_input') %>% layer_embedding(input_dim = 13, output_dim = 16,trainable = TRUE) %>% layer_dense(units=50, activation= "relu", trainable = TRUE) %>% layer_reshape(target_shape = 50,trainable = TRUE,name="cat_layer")
+```
+
+#Numerical input
+```{r}
+num_layer <- layer_input(shape = 2,  name = 'num_input') %>% layer_dense(units=50, activation= "relu",input_shape = 2, trainable = TRUE) %>% layer_reshape(target_shape = 50,trainable = TRUE,name="num_layer")
+```
+
+```{r}
+model <- keras_model_sequential()
+model %>% 
+  layer_dense(units = 30, activation = 'relu', input_shape = c(2,6404)) %>% 
+  layer_dense(units = 30, activation = 'softmax') %>%
+  layer_dense(units = 1)
+```
+
+```{r}
+model %>% compile(
+  optimizer = tf$optimizers$legacy$Adam(learning_rate=5e-3),
+  loss      = 'categorical_crossentropy',
+  metrics   = 'accuracy'
+  )
+```
+
+```{r}
+history <- model %>% fit(X_df,Y, epochs = 100, bach_size = 256, validation_split = 0.2)
+```
+
+```{r}
+#make model
+model_keras <- keras_model_sequential() %>%
+
+  #COncatenate both inputs
+  layer_concatenate(inputs=c(cat_layer,num_layer),trainable = TRUE) %>%
+
+  #Only one hidden layer
+layer_dense(
+  units              = 2, 
+  kernel_initializer = "normal", 
+  activation         = "relu", 
+  input_shape        = 50) %>% 
+
+  #Compile model
+  compile(
+    optimizer = tf$optimizers$legacy$Adam(learning_rate=1e-3),
+    loss      = 'categorical_crossentropy',
+    metrics   = 'accuracy'
+  )
+```
+
+#Fit the model
+model_keras %>% fit(list(cat_input, num_input), epochs = 100)
+
+
+
+
